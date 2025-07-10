@@ -34,6 +34,11 @@ jobs:
             docker run -d --name app -p 80:3000 \
               ${{ env.REGISTRY_ID }}/${{ env.APP_NAME }}:${{ github.event.inputs.release_version }}_latest
 
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
       - name: Find release issue
         id: find-issue
         env:
@@ -42,7 +47,7 @@ jobs:
           issue_number=$(gh issue list --state all \
             --search "Release ${{ github.event.inputs.release_version }}" \
             --json number -q '.[0].number' || echo "0")
-          
+
           echo "number=$issue_number" >> $GITHUB_OUTPUT
 
       - name: Add deployment comment
