@@ -1,0 +1,83 @@
+name: Release Flow
+
+on:
+  workflow_dispatch:
+
+env:
+  REGISTRY_ID: ${{ secrets.YC_REGISTRY_ID }}
+  APP_NAME: app
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run checks
+        run: |
+          npm run lint
+          npm run test
+
+      - name: Get hotfix number
+        id: hotfix
+        run: echo "number=${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+      - name: Login to Yandex Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: cr.yandex
+          username: iam
+          password: ${{ secrets.YC_AUTH_TOKEN }}
+
+      - name: Build and push Docker image
+        run: |
+          docker build -t ${{ env.REGISTRY_ID }}/${{ env.APP_NAME }}:${{ github.event.inputs.release_version }}_fix${{ steps.hotfix.outputs.number }} .
+          docker tag ${{ env.REGISTRY_ID }}/${{ env.APP_NAME }}:${{ github.event.inputs.release_version }}_fix${{ steps.hotfix.outputs.number }} \
+                     ${{ env.REGISTRY_ID }}/${{ env.APP_NAME }}:${{ github.event.inputs.release_version }}_latest
+          docker push ${{ env.REGISTRY_ID }}/${{ env.APP_NAME }}:${{ github.event.inputs.release_version }}_fix${{ steps.hotfix.outputs.number }}
+          docker push ${{ env.REGISTRY_ID }}/${{ env.APP_NAME }}:${{ github.event.inputs.release_version }}_latest
+
+      - name: Create fix tag
+        run: |
+          git tag v${{ github.event.inputs.release_version }}_fix${{ steps.hotfix.outputs.number }}
+          git push origin v${{ github.event.inputs.release_version }}_fix${{ steps.hotfix.outputs.number }}
+
+      - name: Get commits since release
+        id: commits
+        run: |
+          COMMITS=$(git log v${{ github.event.inputs.release_version }}..HEAD --pretty=format:"- %s (%h)")
+          echo "commits<<EOF" >> $GITHUB_OUTPUT
+          echo "$COMMITS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Find release issue
+        id: find-issue
+        run: |
+          gh issue list --state all --search "Release ${{ github.event.inputs.release_version }}" --json number -q '.[0].number' > issue_number.txt
+          echo "number=$(cat issue_number.txt)" >> $GITHUB_OUTPUT
+
+      - name: Comment on issue
+        if: steps.find-issue.outputs.number != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ steps.find-issue.outputs.number }},
+              body: `**Hotfix Date:** ${new Date().toISOString()}
+                     **Author:** ${{ github.actor }}
+                     **Commits:**\n${{ steps.commits.outputs.commits }}
+                     **Docker Image:** ${{ env.REGISTRY_ID }}/${{ env.APP_NAME }}:${{ github.event.inputs.release_version }}_fix${{ steps.hotfix.outputs.number }}`
+            });
