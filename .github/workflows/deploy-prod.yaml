@@ -28,12 +28,11 @@ jobs:
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
           script: |
-            sg docker -c "
-              docker stop app || true
-              docker rm app || true
-              echo \"${{ secrets.YC_AUTH_TOKEN }}\" | docker login --username oauth --password-stdin cr.yandex
-              docker run -d --name app -p 80:3000 \
-                ${{ vars.REGISTRY_ID }}/app:${{ github.event.inputs.release_version }}_latest"
+            docker stop app || true
+            docker rm app || true
+            echo "${{ secrets.YC_AUTH_TOKEN }}" | docker login --username oauth --password-stdin cr.yandex
+            docker run -d --name app -p 80:3000 \
+              ${{ env.REGISTRY_ID }}/${{ env.APP_NAME }}:${{ github.event.inputs.release_version }}_latest
 
       - name: Find release issue
         id: find-issue
