@@ -18,6 +18,7 @@ jobs:
     steps:
       - name: Verify image exists
         run: |
+          docker login -u oauth -p "${{ secrets.YC_AUTH_TOKEN }}" cr.yandex
           docker pull ${{ env.REGISTRY_ID }}/${{ env.APP_NAME }}:${{ github.event.inputs.release_version }}_latest || exit 1
 
       - name: Deploy via SSH
