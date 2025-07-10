@@ -1,0 +1,79 @@
+name: Release Flow
+
+on:
+  workflow_dispatch:
+
+env:
+  REGISTRY_ID: ваш_идентификатор_реестра # Добавьте в Secrets: YC_REGISTRY_ID
+  APP_NAME: app
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run checks
+        run: |
+          npm run lint
+          npm run test
+
+      - name: Get version
+        id: version
+        run: echo "version=${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+      - name: Create release branch
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git checkout -b releases/${{ steps.version.outputs.version }}
+
+      - name: Login to Yandex Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: cr.yandex
+          username: oauth
+          password: ${{ secrets.YC_AUTH_TOKEN }}
+      # - name: Login to Yandex Container Registry
+      #   uses: docker/login-action@v3
+      #   with:
+      #     registry: cr.yandex
+      #     username: iam
+      #     password: ${{ secrets.YC_AUTH_TOKEN }}
+
+      - name: Build and push Docker image
+        run: |
+          docker build -t cr.yandex/${{ env.REGISTRY_ID }}/app:${{ steps.version.outputs.version }} .
+          docker tag cr.yandex/${{ env.REGISTRY_ID }}/app:${{ steps.version.outputs.version }} \
+                    cr.yandex/${{ env.REGISTRY_ID }}/app:${{ steps.version.outputs.version }}_latest
+          docker push cr.yandex/${{ env.REGISTRY_ID }}/app:${{ steps.version.outputs.version }}
+          docker push cr.yandex/${{ env.REGISTRY_ID }}/app:${{ steps.version.outputs.version }}_latest
+
+      - name: Create release tag
+        run: |
+          git tag v${{ steps.version.outputs.version }}
+          git push origin v${{ steps.version.outputs.version }}
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          LATEST_TAG=$(git describe --tags --abbrev=0 --match "v*" $(git rev-list --tags --skip=1 --max-count=1) || true)
+          if [ -z "$LATEST_TAG" ]; then
+            COMMITS=$(git log --pretty=format:"- %s (%h)")
+          else
+            COMMITS=$(git log $LATEST_TAG..HEAD --pretty=format:"- %s (%h)")
+          fi
+          echo "commits<<EOF" >> $GITHUB_OUTPUT
+          echo "$COMMITS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
