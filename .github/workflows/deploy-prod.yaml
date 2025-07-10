@@ -36,9 +36,14 @@ jobs:
 
       - name: Find release issue
         id: find-issue
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          gh issue list --state all --search "Release ${{ github.event.inputs.release_version }}" --json number -q '.[0].number' > issue_number.txt
-          echo "number=$(cat issue_number.txt)" >> $GITHUB_OUTPUT
+          issue_number=$(gh issue list --state all \
+            --search "Release ${{ github.event.inputs.release_version }}" \
+            --json number -q '.[0].number' || echo "0")
+          
+          echo "number=$issue_number" >> $GITHUB_OUTPUT
 
       - name: Add deployment comment
         if: steps.find-issue.outputs.number != ''
