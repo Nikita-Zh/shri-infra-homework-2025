@@ -18,7 +18,7 @@ jobs:
     steps:
       - name: Verify image exists
         run: |
-          docker pull cr.yandex/${{ env.REGISTRY_ID }}/${{ env.APP_NAME }}:${{ github.event.inputs.release_version }}_latest || exit 1
+          docker pull ${{ env.REGISTRY_ID }}/${{ env.APP_NAME }}:${{ github.event.inputs.release_version }}_latest || exit 1
 
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
