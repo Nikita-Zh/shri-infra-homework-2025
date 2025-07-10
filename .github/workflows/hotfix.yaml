@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_version:
+        description: 'Release version (e.g. 123)'
         required: true
         type: number
 
@@ -15,20 +16,13 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - name: Verify release branch exists
-        id: check-branch
-        run: |
-          if ! git ls-remote --exit-code origin releases/${{ github.event.inputs.release_version }}; then
-            echo "::error::Release branch releases/${{ github.event.inputs.release_version }} not found!"
-            exit 1
-          fi
-          echo "branch=releases/${{ github.event.inputs.release_version }}" >> $GITHUB_OUTPUT
-
-      - name: Checkout
+      - name: Checkout release branch
+        id: checkout-branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.check-branch.outputs.branch }}
+          ref: releases/${{ github.event.inputs.release_version }}
           fetch-depth: 0
+        continue-on-error: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -77,39 +71,45 @@ jobs:
       - name: Get commits since last release
         id: commits
         run: |
-          RELEASE_TAG="v${{ github.event.inputs.release_version }}"
-          PREV_TAG=$(git tag --list "$RELEASE_TAG*" --sort=-v:refname | head -n 1 || echo "")
-
+          RELEASE_TAG_PATTERN="v${{ github.event.inputs.release_version }}*"
+          PREV_TAG=$(git tag --list "$RELEASE_TAG_PATTERN" --sort=-v:refname | head -n 1 || echo "")
+          
           if [ -z "$PREV_TAG" ]; then
-            echo "No previous tags found, using all commits"
+            echo "No previous tags found, using all commits in branch"
             COMMITS=$(git log --pretty=format:"- %s (%h)")
           else
             echo "Using previous tag: $PREV_TAG"
             COMMITS=$(git log $PREV_TAG..HEAD --pretty=format:"- %s (%h)")
           fi
-
-          DELIMITER=$(date +%s | sha256sum | head -c 8)
+          
+          # Безопасный вывод многострочных данных
+          DELIMITER="EOF_$(date +%s)"
           echo "commits<<$DELIMITER" >> $GITHUB_OUTPUT
           echo "$COMMITS" >> $GITHUB_OUTPUT
           echo "$DELIMITER" >> $GITHUB_OUTPUT
 
       - name: Find release issue
         id: find-issue
-        run: |
-          gh issue list --state all --search "Release ${{ github.event.inputs.release_version }}" --json number -q '.[0].number' > issue_number.txt
-          echo "number=$(cat issue_number.txt)" >> $GITHUB_OUTPUT
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data } = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${context.repo.owner}/${context.repo.repo} in:title "Release ${{ github.event.inputs.release_version }}"`
+            });
+            return data.items[0]?.number || 0;
+          result-encoding: string
 
       - name: Comment on issue
-        if: steps.find-issue.outputs.number != ''
+        if: ${{ steps.find-issue.outputs.result != '0' }}
         uses: actions/github-script@v7
         with:
           script: |
             github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: ${{ steps.find-issue.outputs.number }},
-              body: `**Hotfix Date:** ${new Date().toISOString()}
-                     **Author:** ${{ github.actor }}
-                     **Commits:**\n${{ steps.commits.outputs.commits }}
-                     **Docker Image:** ${{ env.REGISTRY_ID }}/${{ env.APP_NAME }}:${{ github.event.inputs.release_version }}_fix${{ steps.hotfix.outputs.number }}`
+              issue_number: ${{ steps.find-issue.outputs.result }},
+              body: `**Hotfix Date:** ${new Date().toISOString()}\n` +
+                     `**Author:** ${context.actor}\n` +
+                     `**Commits:**\n${{ steps.commits.outputs.commits }}\n` +
+                     `**Docker Image:** ${{ env.REGISTRY_ID }}/${{ env.APP_NAME }}:${{ github.event.inputs.release_version }}_fix${{ steps.hotfix.outputs.number }}`
             });
