@@ -2,6 +2,10 @@ name: Hotfix
 
 on:
   workflow_dispatch:
+    inputs:
+      release_version:
+        required: true
+        type: number
 
 env:
   REGISTRY_ID: ${{ secrets.YC_REGISTRY_ID }}
@@ -11,9 +15,19 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      - name: Verify release branch exists
+        id: check-branch
+        run: |
+          if ! git ls-remote --exit-code origin releases/${{ github.event.inputs.release_version }}; then
+            echo "::error::Release branch releases/${{ github.event.inputs.release_version }} not found!"
+            exit 1
+          fi
+          echo "branch=releases/${{ github.event.inputs.release_version }}" >> $GITHUB_OUTPUT
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ steps.check-branch.outputs.branch }}
           fetch-depth: 0
 
       - name: Setup Node.js
@@ -42,24 +56,42 @@ jobs:
 
       - name: Build and push Docker image
         run: |
-          docker build -t ${{ env.REGISTRY_ID }}/${{ env.APP_NAME }}:${{ github.event.inputs.release_version }}_fix${{ steps.hotfix.outputs.number }} .
-          docker tag ${{ env.REGISTRY_ID }}/${{ env.APP_NAME }}:${{ github.event.inputs.release_version }}_fix${{ steps.hotfix.outputs.number }} \
+          FIX_TAG="${{ github.event.inputs.release_version }}_fix${{ steps.hotfix.outputs.number }}"
+
+          docker build -t ${{ env.REGISTRY_ID }}/${{ env.APP_NAME }}:$FIX_TAG .
+          docker tag ${{ env.REGISTRY_ID }}/${{ env.APP_NAME }}:$FIX_TAG \
                      ${{ env.REGISTRY_ID }}/${{ env.APP_NAME }}:${{ github.event.inputs.release_version }}_latest
-          docker push ${{ env.REGISTRY_ID }}/${{ env.APP_NAME }}:${{ github.event.inputs.release_version }}_fix${{ steps.hotfix.outputs.number }}
+
+          docker push ${{ env.REGISTRY_ID }}/${{ env.APP_NAME }}:$FIX_TAG
           docker push ${{ env.REGISTRY_ID }}/${{ env.APP_NAME }}:${{ github.event.inputs.release_version }}_latest
 
       - name: Create fix tag
         run: |
-          git tag v${{ github.event.inputs.release_version }}_fix${{ steps.hotfix.outputs.number }}
-          git push origin v${{ github.event.inputs.release_version }}_fix${{ steps.hotfix.outputs.number }}
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
 
-      - name: Get commits since release
+          TAG_NAME="v${{ github.event.inputs.release_version }}_fix${{ steps.hotfix.outputs.number }}"
+          git tag $TAG_NAME
+          git push origin $TAG_NAME
+
+      - name: Get commits since last release
         id: commits
         run: |
-          COMMITS=$(git log v${{ github.event.inputs.release_version }}..HEAD --pretty=format:"- %s (%h)")
-          echo "commits<<EOF" >> $GITHUB_OUTPUT
+          RELEASE_TAG="v${{ github.event.inputs.release_version }}"
+          PREV_TAG=$(git tag --list "$RELEASE_TAG*" --sort=-v:refname | head -n 1 || echo "")
+
+          if [ -z "$PREV_TAG" ]; then
+            echo "No previous tags found, using all commits"
+            COMMITS=$(git log --pretty=format:"- %s (%h)")
+          else
+            echo "Using previous tag: $PREV_TAG"
+            COMMITS=$(git log $PREV_TAG..HEAD --pretty=format:"- %s (%h)")
+          fi
+
+          DELIMITER=$(date +%s | sha256sum | head -c 8)
+          echo "commits<<$DELIMITER" >> $GITHUB_OUTPUT
           echo "$COMMITS" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "$DELIMITER" >> $GITHUB_OUTPUT
 
       - name: Find release issue
         id: find-issue
