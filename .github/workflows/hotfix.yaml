@@ -1,4 +1,4 @@
-name: Release Flow
+name: Hotfix
 
 on:
   workflow_dispatch:
